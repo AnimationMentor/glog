@@ -436,6 +436,8 @@ type loggingT struct {
 	// mu protects the remaining elements of this structure and is
 	// used to synchronize logging.
 	mu sync.Mutex
+	//
+	addlStreams []io.Writer
 	// file holds writer for each of the log types.
 	file [numSeverity]flushSyncWriter
 	// pcs is used in V to avoid an allocation when computing the caller's PC.
@@ -681,10 +683,12 @@ func (l *loggingT) output(s severity, buf *buffer, file string, line int, alsoTo
 		os.Stderr.Write(data)
 	} else if l.toStderr {
 		os.Stderr.Write(data)
+		l.outputToStreams(data)
 	} else {
 		if alsoToStderr || l.alsoToStderr || s >= l.stderrThreshold.get() {
 			os.Stderr.Write(data)
 		}
+		l.outputToStreams(data)
 		if l.file[s] == nil {
 			if err := l.createFiles(s); err != nil {
 				os.Stderr.Write(data) // Make sure the message appears somewhere.
@@ -736,6 +740,22 @@ func (l *loggingT) output(s severity, buf *buffer, file string, line int, alsoTo
 	if stats := severityStats[s]; stats != nil {
 		atomic.AddInt64(&stats.lines, 1)
 		atomic.AddInt64(&stats.bytes, int64(len(data)))
+	}
+}
+
+func (l *loggingT) outputToStreams(data []byte) {
+	deadStreams := make([]int, 0, 5)
+	for idx, stream := range l.addlStreams {
+		os.Stderr.WriteString(fmt.Sprintf("STREAM #%d\n", idx))
+		_, err := stream.Write(data)
+		if err != nil {
+			os.Stderr.WriteString(fmt.Sprintf("STREAM WRITE FAILED - %s\n", err.Error()))
+			deadStreams = append(deadStreams, idx)
+		}
+	}
+
+	for _, idxToRemove := range deadStreams {
+		l.addlStreams = append(l.addlStreams[:idxToRemove], l.addlStreams[idxToRemove+1:]...)
 	}
 }
 
@@ -978,6 +998,11 @@ func (l *loggingT) setV(pc uintptr) Level {
 	return 0
 }
 
+func (l *loggingT) addStream(stream io.Writer) {
+	l.addlStreams = append(l.addlStreams, stream)
+	os.Stderr.WriteString(fmt.Sprintf("Now with %d addl streams\n", len(l.addlStreams)))
+}
+
 // Verbose is a boolean type that implements Infof (like Printf) etc.
 // See the documentation of V for more information.
 type Verbose bool
@@ -1177,4 +1202,8 @@ func Exitln(args ...interface{}) {
 func Exitf(format string, args ...interface{}) {
 	atomic.StoreUint32(&fatalNoStacks, 1)
 	logging.printf(fatalLog, format, args...)
+}
+
+func AddLogStream(stream io.Writer) {
+	logging.addStream(stream)
 }
