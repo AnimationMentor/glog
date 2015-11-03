@@ -746,7 +746,6 @@ func (l *loggingT) output(s severity, buf *buffer, file string, line int, alsoTo
 func (l *loggingT) outputToStreams(data []byte) {
 	deadStreams := make([]int, 0, 5)
 	for idx, stream := range l.addlStreams {
-		os.Stderr.WriteString(fmt.Sprintf("STREAM #%d\n", idx))
 		_, err := stream.Write(data)
 		if err != nil {
 			os.Stderr.WriteString(fmt.Sprintf("STREAM WRITE FAILED - %s\n", err.Error()))
@@ -754,9 +753,13 @@ func (l *loggingT) outputToStreams(data []byte) {
 		}
 	}
 
-	for _, idxToRemove := range deadStreams {
-		l.addlStreams = append(l.addlStreams[:idxToRemove], l.addlStreams[idxToRemove+1:]...)
-	}
+	// TODO: Is there a race condition here against new connections?
+    if len(deadStreams) > 0 {
+		for i := len(deadStreams)-1; i >= 0; i-- {
+			idxToRemove := deadStreams[i]
+			l.addlStreams = append(l.addlStreams[:idxToRemove], l.addlStreams[idxToRemove+1:]...)
+		}
+    }
 }
 
 // timeoutFlush calls Flush and returns when it completes or after timeout
